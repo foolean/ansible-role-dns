@@ -13,8 +13,11 @@
       become: true
       ansible.builtin.package:
         name:
+          # RedHat packages
           - 'bind'
           - 'bind-chroot'
+          # Debian packages
+          - 'bind9'
         state: absent
 
   # Tags to be applied to this role (block)
