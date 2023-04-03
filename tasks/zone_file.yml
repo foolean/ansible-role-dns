@@ -1,0 +1,21 @@
+# Copyright (c) 2023, Bennett Samowich <bennett@foolean.org>
+# All rights reserved
+# SPDX short identifier: BSD-3-Clause
+---
+
+- name: Configure zone files
+  become: true
+  ansible.builtin.template:
+    src: 'etc/bind/zone_file.j2'
+    dest: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}/db.{{ item.key }}.cm"
+    owner: "root"
+    group: "{{ dns_server_group }}"
+    mode: '0640'
+  vars:
+    dns_server_zone_file: "{{ item.key }}"
+    dns_server_zone_file_data: "{{ item.value }}"
+  with_dict: "{{ loop_item.value.zone_files }}"
+  register: dns_server_zone_file_changes
+  notify:
+    - 'DNS Server Update Serial'
+    - 'DNS Server Restart'

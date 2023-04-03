@@ -1,0 +1,53 @@
+logging {
+
+    // CIS: Configure a syslog channel
+    channel local_syslog {
+        // Specifies the syslog facility to use, check your syslog.conf
+        // Some prefer usage of a local<N> facility specific to BIND.
+        syslog daemon;
+
+        // debug messages cannot be sent to syslog, info is the lowest.
+        severity info;
+
+        // print the category and severity with each message
+        print-category yes;
+        print-severity yes;
+    };
+
+    // CIS: Configure a File Channel
+    channel security_syslog {
+        syslog daemon;
+        severity debug;
+        print-category yes;
+        print-severity  yes;
+    };
+
+    // dedicated syslog channel for debugging DNSSEC
+    channel dnssec_syslog {
+        syslog daemon;
+        severity debug 2;
+        print-category yes;
+        print-severity yes;
+    };
+
+    // Default in BIND 9 includes everything except general
+    category default  { local_syslog; };
+    category general  { local_syslog; };
+    category queries  { local_syslog; };    // query logging
+    category config   { local_syslog; };    // config file processing
+    category dnssec   { dnssec_syslog; };   // processing signed responses
+    category network  { local_syslog; };    // network operations
+    category security { security_syslog; }; // approved or unapproved requests
+    category update   { local_syslog; };    // dynamic updates
+    category xfer-in  { local_syslog; };    // transfers to the server
+    category xfer-out { local_syslog; };    // transfers from the server
+
+    // Optional debug log file, may be enabled dynamically.
+    //channel local_debug_log {
+    //    file "/var/log/bind/debug.log";
+    //    severity dynamic;
+    //    print-time yes;
+    //};
+    //category default { local_debug_log; };
+    //category general { local_debug_log; };
+};

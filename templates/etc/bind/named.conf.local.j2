@@ -1,0 +1,109 @@
+//
+// named.conf.local
+//
+//  Place any local configuration here
+//
+
+// Manage the file logs
+include "{{ dns_server_etc_dir }}/named.conf.log";
+
+// Consider adding the 1918 zones here, if they are not used in your
+// organization
+//include "{{ dns_server_etc_dir }}/zones.rfc1918";
+
+// Our RNDC key and configuration
+include "{{ dns_server_etc_dir }}/rndc.key";
+controls {
+    inet 127.0.0.1 port 953
+    allow { 127.0.0.1; } keys { "rndc-key"; };
+};
+
+// CIS recommends disabling statistics-channels but it is
+// needed for monitoring and reporting.  It is bound to
+// localhost and made accessible only by localhost, which
+// should suffice to reduce any risk introduced by running
+// statistics-channels in the first place.
+statistics-channels {
+    inet 127.0.0.1 port {{ dns_server_statistics_port }} allow { 127.0.0.1; };
+};
+
+{% if dns_server_role == 'master' %}
+{%  if dns_server_slaves != None %}
+// TSIG keys and ACLs for our slaves
+
+{%      for dns_slave, dns_slave_data in dns_server_slaves.items() %}
+// TSIG key for slave '{{ dns_slave }}'
+key "slave-{{ dns_slave }}-tsig" {
+    algorithm {{ dns_slave_data.algorithm|lower }};
+    secret "{{ dns_slave_data.secret }}";
+};
+// ACL to permit transfers from the slave '{{ dns_slave }}' address
+acl "slave-{{ dns_slave }}-transfer-allowed" {
+    {{ dns_slave_data.address }};
+};
+// ACL to deny transfers from anything other than the slave '{{ dns_slave }}' address
+acl "slave-{{ dns_slave }}-transfer-not-allowed" {
+    !slave-{{ dns_slave }}-transfer-allowed;
+    any;
+};
+// ACL to permit transfers from the slave '{{ dns_slave }}' address and with the slave '{{ dns_slave }}' TSIG key
+acl "slave-{{ dns_slave }}-transfer" {
+    !slave-{{ dns_slave }}-transfer-not-allowed;
+    key "slave-{{ dns_slave }}-tsig";
+};
+{%      endfor %}
+
+// ACL to permit transfers from the slaves
+acl "slave-transfer" {
+{%      for dns_slave, dns_slave_data in dns_server_slaves.items() %}
+    slave-{{ dns_slave }}-transfer;
+{%      endfor %}
+};
+
+
+// Server declarations for our slaves
+
+{%      for dns_slave, dns_slave_data in dns_server_slaves.items() %}
+// Server declaration for slave {{ dns_slave }}
+server {{ dns_slave_data.address }} {
+    keys {
+        slave-{{ dns_slave }}-tsig;
+    };
+};
+{%      endfor %}
+{%  endif %}
+{% else %}
+{%  if dns_server_slaves != None %}
+{%      for dns_slave, dns_slave_data in dns_server_slaves.items()|sort %}
+{%          if dns_slave == ansible_hostname %}
+// TSIG key for '{{ dns_slave }}'
+key "slave-{{ dns_slave }}-tsig" {
+    algorithm {{ dns_slave_data.algorithm|lower }};
+    secret "{{ dns_slave_data.secret }}";
+};
+{%          endif %}
+{%      endfor %}
+
+{%  endif %}
+// Server declaration for the masters
+
+{%  if dns_server_masters != None %}
+{%      for dns_master in dns_server_masters|unique|sort %}
+// Server declaration for master {{ dns_master }}
+server {{ dns_master }} {
+    keys {
+        slave-{{ ansible_hostname }}-tsig;
+        };
+{%      endfor %}
+
+{%  endif %}
+{% endif %}
+
+{% if dns_server_zones != None %}
+// Include our zone-based master files
+{%  for zone, zone_data in dns_server_zones.items()|sort %}
+include "{{ dns_server_etc_dir }}/named.conf.{{ zone }}";
+{%  endfor %}
+{% endif %}
+
+// End-of-File

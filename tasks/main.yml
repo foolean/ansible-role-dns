@@ -9,16 +9,269 @@
 - name: Role foolean/dns
   block:
 
+    - name: Set OS variables
+      ansible.builtin.include_vars:
+        file: "{{ item }}"
+      with_first_found:
+        - "{{ ansible_os_family|lower }}.yml"
+        - "default.yml"
+      tags:
+        - 'always'
+
     - name: Ensure DNS Server is not installed (CIS)
       become: true
       ansible.builtin.package:
         name:
-          # RedHat packages
-          - 'bind'
-          - 'bind-chroot'
-          # Debian packages
-          - 'bind9'
+          - "{{ dns_server_packages }}"
         state: absent
+      when:
+        - not dns_server_enable
+
+    # ----------------------------------------------------------------------
+    # This block configures the DNS server
+    # ----------------------------------------------------------------------
+    - name: Configure DNS server
+      block:
+        - name: Ensure DNS Server is installed
+          become: true
+          ansible.builtin.package:
+            name: "{{ dns_server_packages }}"
+            state: present
+
+        - name: CIS | Configure DNS server user
+          become: true
+          ansible.builtin.user:
+            name: "{{ dns_server_user }}"
+            shell: "{{ dns_server_user_shell }}"
+            password_lock: true
+
+        - name: Configure DNS server (debian)
+          ansible.builtin.import_tasks:
+            file: 'debian.yml'
+          when:
+            - ansible_os_family|lower == "debian"
+
+        - name: Configure /var/named
+          become: true
+          ansible.builtin.file:
+            name: '/var/named'
+            state: directory
+            owner: 'root'
+            group: "{{ dns_server_group }}"
+            mode: '1770'
+
+        - name: CIS | Configure chroot directories
+          become: true
+          ansible.builtin.file:
+            name: "{{ item.name }}"
+            state: directory
+            owner: "{{ item.owner }}"
+            group: "{{ item.group }}"
+            mode: "{{ item.mode }}"
+          with_items:
+            - {name: "{{ dns_server_chroot_dir }}", owner: 'root', group: "{{ dns_server_group }}", mode: '0750'}
+            - {name: "{{ dns_server_chroot_dir }}/dev", owner: 'root', group: "{{ dns_server_group }}", mode: '0750'}
+            - {name: "{{ dns_server_chroot_dir }}/etc", owner: 'root', group: "{{ dns_server_group }}", mode: '0750'}
+            - {name: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}", owner: 'root', group: "{{ dns_server_group }}", mode: '0750'}
+            - {name: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}/keys", owner: 'root', group: "{{ dns_server_group }}", mode: '2750'}
+            - {name: "{{ dns_server_chroot_dir }}/var", owner: 'root', group: "{{ dns_server_group }}", mode: '0750'}
+            - {name: "{{ dns_server_chroot_dir }}/var/named", owner: 'root', group: "{{ dns_server_group }}", mode: '1770'}
+            - {name: "{{ dns_server_chroot_dir }}/var/named/data", owner: "{{ dns_server_user }}", group: "{{ dns_server_group }}", mode: '0770'}
+            - {name: "{{ dns_server_chroot_dir }}/var/run", owner: 'root', group: "{{ dns_server_group }}", mode: '0750'}
+            - {name: "{{ dns_server_chroot_dir }}/var/run/named", owner: "{{ dns_server_user }}", group: "{{ dns_server_group }}", mode: '0750'}
+
+        - name: Create devices in the chroot directory
+          become: true
+          ansible.builtin.command:
+            chdir: "{{ dns_server_chroot_dir }}/dev"
+            cmd: "mknod {{ item.name }} c 1 {{ item.minor }}"
+            creates: "{{ item.name }}"
+          with_items:
+            - {name: 'null', minor: 3}
+            - {name: 'zero', minor: 5}
+            - {name: 'random', minor: 8}
+
+        - name: Set device permissions
+          become: true
+          ansible.builtin.file:
+            name: "{{ dns_server_chroot_dir }}/dev/{{ item }}"
+            owner: 'root'
+            group: 'root'
+            mode: '0660'
+          with_items:
+            - 'null'
+            - 'zero'
+            - 'random'
+
+        - name: Configure DNS to use chroot (debian)
+          become: true
+          ansible.builtin.template:
+            src: 'etc/default/named.j2'
+            dest: '/etc/default/named'
+            owner: 'root'
+            group: 'root'
+            mode: '0644'
+          when:
+            - ansible_os_family|lower == 'debian'
+
+        - name: Check if /etc/<bind> exists
+          become: true
+          ansible.builtin.stat:
+            path: "{{ dns_server_etc_dir }}"
+          register: dns_server_etc_dir_stat
+
+        - name: Backup the current /etc/<bind> directory
+          become: true
+          ansible.builtin.command:
+            cmd: "mv '{{ dns_server_etc_dir }}' '{{ dns_server_etc_dir }}.orig'"
+          when:
+            - dns_server_etc_dir_stat.stat.exists
+            - dns_server_etc_dir_stat.stat.isdir
+
+        - name: Symlink chroot /etc/<bind> into /etc
+          become: true
+          ansible.builtin.file:
+            src: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}"
+            dest: "{{ dns_server_etc_dir }}"
+            owner: 'root'
+            group: "{{ dns_server_group }}"
+            force: true
+            state: link
+
+        - name: Create /dev/log
+          become: true
+          ansible.builtin.copy:
+            content: "$AddUnixListenSocket {{ dns_server_chroot_dir }}/dev/log"
+            dest: '/etc/rsyslog.d/bind-chroot.conf'
+            owner: 'root'
+            group: 'root'
+            mode: '0644'
+          notify: DNS Server restart rsyslog
+
+        - name: Configure AppArmor
+          become: true
+          ansible.builtin.template:
+            src: 'etc/apparmor.d/local/usr.sbin.named.j2'
+            dest: '/etc/apparmor.d/local/usr.sbin.named'
+            owner: 'root'
+            group: 'root'
+            mode: '0644'
+          notify: DNS Server reload apparmor
+          when:
+            - ansible_os_family|lower == "debian"
+
+        - name: Install serial update helper script
+          become: true
+          ansible.builtin.template:
+            src: 'usr/local/sbin/dns-update-serial.j2'
+            dest: '/usr/local/sbin/dns-update-serial'
+            owner: 'root'
+            group: 'root'
+            mode: '0750'
+
+        - name: Configure default configuration and zone files
+          become: true
+          ansible.builtin.template:
+            src: "etc/bind/{{ item }}.j2"
+            dest: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}/{{ item }}"
+            owner: "root"
+            group: "{{ dns_server_group }}"
+            mode: '0640'
+          notify: 'DNS Server Restart'
+          with_items:
+            - 'db.0'
+            - 'db.127'
+            - 'db.255'
+            - 'db.empty'
+            - 'db.local'
+            - 'db.root'
+            - 'named.conf'
+            - 'named.conf.acl'
+            - 'named.conf.default-zones'
+            - 'named.conf.forwarded-zones'
+            - 'named.conf.local'
+            - 'named.conf.log'
+            - 'named.conf.options'
+            - 'rndc.key'
+
+        - name: Configure defined zones
+          become: true
+          ansible.builtin.template:
+            src: 'etc/bind/named.conf.zone.j2'
+            dest: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}/named.conf.{{ item.key }}"
+            owner: "root"
+            group: "{{ dns_server_group }}"
+            mode: '0640'
+          vars:
+            dns_server_zone: "{{ item.key }}"
+            dns_server_zone_data: "{{ item.value }}"
+          with_dict: "{{ dns_server_zones }}"
+          notify: 'DNS Server Restart'
+
+        - name: Configure zone files
+          become: true
+          ansible.builtin.template:
+            src: 'etc/bind/zone_file.j2'
+            dest: "{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}/db.{{ item.key }}"
+            owner: "root"
+            group: "{{ dns_server_group }}"
+            mode: '0640'
+          vars:
+            dns_server_zone_file: "{{ item.key }}"
+            dns_server_zone_file_data: "{{ item.value }}"
+          with_dict: "{{ dns_server_zones|dict2items }}"
+          notify: 'DNS Server Restart'
+
+        - name: Configure zone files
+          ansible.builtin.include_tasks:
+            file: 'zone_file.yml'
+          loop: "{{ dns_server_zones|dict2items }}"
+          loop_control:
+            loop_var: loop_item
+
+        - name: Allow outbound DNS
+          become: true
+          ansible.builtin.firewalld:
+            zone: 'public'
+            port: "53/{{ item.proto }}"
+            state: enabled
+            permanent: true
+            immediate: true
+          with_items:
+            - {proto: 'udp'}
+            - {proto: 'tcp'}
+          when:
+            - ansible_os_family|lower == "redhat"
+
+        - name: Allow outbound DNS
+          become: true
+          community.general.ufw:
+            rule: allow
+            direction: 'out'
+            port: '53'
+            proto: "{{ item.proto }}"
+            log: true
+          with_items:
+            - {proto: 'udp'}
+            - {proto: 'tcp'}
+          when:
+            - ansible_os_family|lower == "debian"
+
+        - name: Ensure DNS service is enabled
+          become: true
+          ansible.builtin.systemd:
+            name: "{{ dns_server_service }}"
+            masked: false
+            enabled: true
+            state: started
+
+      when:
+        - dns_server_enable
+
+    # Flush any handlers that we might have called
+    - name: Flush handlers
+      ansible.builtin.meta:
+        flush_handlers
 
   # Tags to be applied to this role (block)
   tags:

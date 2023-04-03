@@ -1,0 +1,28 @@
+# Copyright (c) 2023, Bennett Samowich <bennett@foolean.org>
+# All rights reserved
+# SPDX short identifier: BSD-3-Clause
+---
+
+- name: DNS Server Update Serial
+  become: true
+  ansible.builtin.command:
+    cmd: "/usr/local/sbin/dns-update-serial -d '{{ dns_server_chroot_dir }}{{ dns_server_etc_dir }}' '{{ item.dest|basename|regex_replace('\\.cm$', '') }}'"
+  with_items: "{{ dns_server_zone_file_changes.results }}"
+
+- name: DNS Server Restart
+  become: true
+  ansible.builtin.service:
+    name: "{{ dns_server_service }}"
+    state: restarted
+
+- name: DNS Server restart rsyslog
+  become: true
+  ansible.builtin.service:
+    name: 'rsyslog'
+    state: restarted
+
+- name: DNS Server reload apparmor
+  become: true
+  ansible.builtin.service:
+    name: 'apparmor'
+    state: reloaded

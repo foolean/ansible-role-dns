@@ -1,0 +1,10 @@
+#
+# run resolvconf?
+RESOLVCONF=no
+
+# startup options for the server
+{% if dns_server_chroot_dir != None %}
+OPTIONS="-u bind -t {{ dns_server_chroot_dir }}"
+{% else %}
+OPTIONS="-u bind"
+{% endif %}

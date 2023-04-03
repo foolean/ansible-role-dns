@@ -1,0 +1,217 @@
+/*
+ * Filename: named.conf.{{ dns_server_zone }} ({{ dns_server_role|lower }})
+ */
+
+
+/*
+ *-----------------------------------------------------------------------------
+ * Transfer ACL configurations
+ *-----------------------------------------------------------------------------
+ */
+{%  if 'allow_transfer' in dns_server_zone_data %}
+{%    if dns_server_zone_data.allow_transfer != None %}
+{%        for key, data in dns_server_zone_data.allow_transfer.items()|unique %}
+
+/* Zone Transfer TSIG key for '{{ key }}' */
+key "{{ dns_server_zone }}-{{ key }}-transfer-tsig" {
+    algorithm {{ data.algorithm|lower }};
+    secret "{{ data.secret }}";
+};
+/* ACL to permit zone transfers from the '{{ key }}' address */
+acl "{{ dns_server_zone }}-{{ key }}-transfer-allowed" {
+    {{ data.address }};
+};
+/* ACL to deny zone transfers from anything other than the '{{ key }}' address */
+acl "{{ dns_server_zone }}-{{ key }}-transfer-denied" {
+    !{{ dns_server_zone }}-{{ key }}-transfer-allowed;
+    any;
+};
+/* ACL to permit zone transfers from the '{{ key }}' anddress and with the '{{ key }}' TSIG key */
+acl "{{ dns_server_zone }}-{{ key }}-transfer" {
+    !{{ dns_server_zone }}-{{ key }}-transfer-denied;
+    key "{{ dns_server_zone }}-{{ key }}-transfer-tsig";
+};
+
+{%        endfor %}
+{%    endif %}
+{%  endif %}
+
+
+/*
+ *-----------------------------------------------------------------------------
+ * Update ACL configurations
+ *-----------------------------------------------------------------------------
+ */
+{%  if 'allow_update' in dns_server_zone_data %}
+{%      if dns_server_zone_data.allow_update != None %}
+{%          for key, data in dns_server_zone_data.allow_update.items()|unique %}
+
+/* DDNS Update TSIG key for '{{ key }}' */
+key "{{ dns_server_zone }}-{{ key }}-update-tsig" {
+    algorithm {{ data.algorithm|lower }};
+    secret "{{ data.secret }}";
+};
+{%                if dns_server_role|lower == 'master' %}
+{%                    if dns_server_slaves != None %}
+/*
+ * ACL to permit ddns updates from the '{{ key }}' address
+ * and the various slaves for update forwarding
+ */
+{%                    else %}
+/* ACL to permit ddns updates from the '{{ key }}' address */
+{%                    endif %}
+{%                else %}
+/* ACL to permit ddns updates from the '{{ key }}' address */
+{%                endif %}
+acl "{{ dns_server_zone }}-{{ key }}-update-allowed" {
+{%                if dns_server_role|lower == 'master' %}
+{%                    if dns_server_slaves != None %}
+{%                        for dns_slave, dns_slave_data in dns_server_slaves.items()|unique|sort %}
+    {{ dns_slave_data.address }};
+{%                      endfor %}
+{%                  endif %}
+{%              endif %}
+    {{ data.address }};
+};
+/* ACL to deny ddns updates from anything other than the '{{ key }}' address */
+acl "{{ dns_server_zone }}-{{ key }}-update-denied" {
+    !{{ dns_server_zone }}-{{ key }}-update-allowed;
+    any;
+};
+/* ACL to permit ddns updates from the '{{ key }}' address and with the '{{ key }}' TSIG key */
+acl "{{ dns_server_zone }}-{{ key }}-update" {
+    !{{ dns_server_zone }}-{{ key }}-update-denied;
+    key "{{ dns_server_zone }}-{{ key }}-update-tsig";
+};
+
+{%          endfor %}
+{%      endif %}
+{%  endif %}
+
+
+/*
+ * ACL for those that are allowed to query
+ * the '{{ dns_server_zone }}' zone data.
+ */
+acl "{{ dns_server_zone }}-query-acl" {
+    localhost;      /* This server is always permitted */
+{%  if 'allow_query' in dns_server_zone_data %}
+{%    if dns_server_zone_data.allow_query != None %}
+{%         for allow_query in dns_server_zone_data.allow_query|unique|sort %}
+    {{ allow_query }};
+{%        endfor %}
+{%    endif %}
+{%  endif %}
+{%  if dns_server_allow_query != None %}
+{%      for allow_query in dns_server_allow_query|unique|sort %}
+    {{ allow_query }};
+{%      endfor %}
+{%  endif %}
+};
+
+
+/*
+ * ACL for those that are allowed to perform zone transfers (AXFR)
+ * of the '{{ dns_server_zone }}' zone data.
+ */
+acl "{{ dns_server_zone }}-transfer-allowed" {
+    localhost;      /* This server is always permitted */
+};
+
+/*
+ * ACL for those that are not allowed to perform zone transfers (AXFR)
+ * of the '{{ dns_server_zone }}' zone data.
+ */
+acl "{{ dns_server_zone }}-transfer-denied" {
+    !{{ dns_server_zone }}-transfer-allowed;
+    any;
+};
+
+/*
+ * Fully assembled ACL for those that are allowed to perform
+ * zone transfers (AXFR) of the '{{ dns_server_zone }}' zone data.
+ * It is this ACL that will be used in zone declarations.
+ */
+acl "{{ dns_server_zone }}-transfer-acl" {
+{%    if dns_server_role|lower == "master" %}
+    slave-transfer;
+{%    endif %}
+{%    if dns_server_zone_data.allow_transfer != None %}
+{%        for key, data in dns_server_zone_data.allow_transfer.items()|unique %}
+    {{ dns_server_zone }}-{{ key }}-transfer;
+{%        endfor %}
+{%    endif %}
+    {{ dns_server_zone }}-transfer-allowed;
+    !{{ dns_server_zone }}-transfer-denied;
+};
+
+
+/*
+ * ACL for those that are allowed to perform DDNS updates
+ * of the '{{ dns_server_zone }}' zone data.
+ */
+acl "{{ dns_server_zone }}-update-allowed" {
+    localhost;      /* This server is always permitted */
+};
+
+/*
+ * ACL for those that are not allowed to perform DDNS updaes
+ * of the '{{ dns_server_zone }}' zone data.
+ */
+acl "{{ dns_server_zone }}-update-denied" {
+    !{{ dns_server_zone }}-update-allowed;
+    any;
+};
+
+/*
+ * Fully assembled ACL for those that are allowed to perform
+ * DDNS updates of the '{{ dns_server_zone }}' zone data.
+ * It is this ACL that will be used in zone declarations.
+ */
+acl "{{ dns_server_zone }}-update-acl" {
+{%  if 'allow_update' in dns_server_zone_data %}
+{%      if dns_server_zone_data.allow_update != None %}
+{%          for key, data in dns_server_zone_data.allow_update.items()|unique %}
+    {{ dns_server_zone }}-{{ key }}-update;
+{%          endfor %}
+{%      endif %}
+{%  endif %}
+    {{ dns_server_zone }}-update-allowed;
+    !{{ dns_server_zone }}-update-denied;
+};
+
+/*
+ *-----------------------------------------------------------------------------
+ * Zone configurations
+ *-----------------------------------------------------------------------------
+ */
+{%     if dns_server_zone_data.zone_files != None %}
+{%        for zone_file, data in dns_server_zone_data.zone_files.items()|unique %}
+/* Zone file for '{{ zone_file }}' */
+zone "{{ zone_file }}" {
+{%            if dns_server_role|lower == "slave" %}
+    type slave;
+    masters {
+{%                if dns_server_master != None %}
+{%                    for master in dns_server_masters|unique|sort %}
+        {{ master }};
+{%                    endfor %}
+{%                endif %}
+    };
+    /*
+     * Replica files will be placed in
+     * /var/named/slaves, which is accomplished
+     * by using the relative path "slaves/<file>"
+     */
+    file "slaves/db.{{ zone_file }}.replica";
+{%            else %}
+    type master;
+    file "/etc/named/db.{{ zone_file }}";
+{%            endif %}
+    allow-query { {{ dns_server_zone }}-query-acl; };
+    allow-transfer { {{ dns_server_zone }}-transfer-acl; };
+};
+{%        endfor %}
+{%     endif %}
+
+// End-of-File

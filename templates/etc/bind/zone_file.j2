@@ -1,0 +1,36 @@
+;
+; db.{{ dns_server_zone_file }}
+;
+{% set ttl = dns_server_zone_file_data.ttl|default(dns_server_ttl) %}
+{% set serial = dns_server_zone_file_data.serial|default(dns_server_serial) %}
+{% set refresh = dns_server_zone_file_data.refresh|default(dns_server_refresh) %}
+{% set retry = dns_server_zone_file_data.retry|default(dns_server_retry) %}
+{% set expire = dns_server_zone_file_data.expire|default(dns_server_expire) %}
+{% set cache_ttl = dns_server_zone_file_data.cache_ttl|default(dns_server_cache_ttl) %}
+$TTL {{ ttl }}
+@           IN  SOA  {{ dns_server_soa_primary_name_server }}.   {{ dns_server_soa_hostmaster_email }}. (
+                   {{ serial.rjust(10, '0') }}           ; Serial
+                   {{ (refresh|string).rjust(10) }}           ; Refresh
+                   {{ (retry|string).rjust(10) }}           ; Retry
+                   {{ (expire|string).rjust(10) }}           ; Expire
+                   {{ (cache_ttl|string).rjust(10) }} )         ; Cache TTL
+
+{%  if dns_server_default_resolvers != None %}
+; Authoritative resolvers
+{%      for default_resolver in dns_server_default_resolvers|unique|sort %}
+@           IN  NS  {{ default_resolver | regex_replace('\.$', '') }}.
+{%      endfor %}
+{%  endif %}
+
+;
+; Resource records
+;
+{%  if 'resource_records' in dns_server_zone_file_data %}
+{%      for resource_record in dns_server_zone_file_data.resource_records %}
+{{ resource_record }}
+{%      endfor %}
+{%  endif %}
+
+;
+; End-of-File
+;

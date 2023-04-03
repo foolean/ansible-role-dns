@@ -1,0 +1,129 @@
+options {
+    directory          "/var/named";
+    // pid-file           "/var/named/data/named.pid";
+    dump-file          "/var/named/data/cache_dump.db";
+    statistics-file    "/var/named/data/named_stats.txt";
+    memstatistics-file "/var/named/data/named_mem_stats.txt";
+    recursing-file     "/var/named/data/named.recursing";
+    secroots-file      "/var/named/data/named.secroots";
+
+    // If there is a firewall between you and nameservers you want
+    // to talk to, you may need to fix the firewall to allow multiple
+    // ports to talk.  See http://www.kb.cert.org/vuls/id/800113
+
+    // If your ISP provided one or more IP addresses for stable
+    // nameservers, you probably want to use them as forwarders.
+    // Uncomment the following block, and insert the addresses replacing
+    // the all-0's placeholder.
+    forwarders {
+{% if dns_server_forwarders != None %}
+{%  for forwarder in dns_server_forwarders|unique %}
+        {{ forwarder }};
+{%  endfor %}
+{% endif %}
+    };
+
+    auth-nxdomain no;    # conform to RFC1035
+
+    listen-on port 53 { any; };
+    listen-on-v6 { any; };
+
+    // Only add records to the authority and additional data sections when
+    // they are required (e.g. delegations, negative responses).
+    minimal-responses yes;
+
+    // Set the EDNS0 response size
+    edns-udp-size 1232;
+
+    // CIS: Hide BIND Version String
+    version "None";
+
+    // CIS: Ignore Erroneous or Unwanted Queries
+    blackhole {
+{% if dns_server_blackhole != None %}
+{%      for blackhole in dns_server_blackhole|unique|sort %}
+        {{ blackhole }};
+{%      endfor %}
+{% endif %}
+        // multicast
+        224/8;
+        // link local
+        169.254/16;
+        // RFC-1918
+        10/8;
+        172.16/12;
+        192.168/16;
+    };
+
+    // CIS: Restrict Recursive Queries
+    allow-recursion {
+        localhost;      /* localhost is always permitted */
+{% if dns_server_allow_recursion != None %}
+{%  for allowed_recursion in dns_server_allow_recursion|unique|sort %}
+        {{ allowed_recursion }};
+{%  endfor %}
+{% endif %}
+    };
+
+    allow-query {
+        localhost;      /* localhost is always permitted */
+{% if dns_server_allow_query != None %}
+{%  for allowed_query in dns_server_allow_query|unique|sort %}
+        {{ allowed_query }};
+{%  endfor %}
+{% endif %}
+    };
+
+    // CIS: Restrict Access to Cache
+    allow-query-cache {
+        localhost;      /* localhost is always permitted */
+{% if dns_server_allow_query_cache != None %}
+{%  for allowed_query_cache in dns_server_allow_query_cache|unique|sort %}
+        {{ allowed_query_cache }};
+{%  endfor %}
+{% endif %}
+    };
+
+    // CIS: Restrict Zone-Transfers
+    allow-transfer {
+{% if dns_server_allow_transfers != None %}
+{%  for allowed_transfers in dns_server_allow_transfers|unique|sort %}
+        {{ allowed_transfers }};
+{%  endfor %}
+{% endif %}
+    };
+
+    // CIS: Implement DNSSEC
+{% if dns_server_dnssec_validation %}
+    dnssec-validation auto;
+    dnssec-accept-expired no;
+{% else -%}
+    // dnssec-validation auto;
+    // dnssec-accept-expired no;
+{% endif %}
+    // dnssec-lookaside auto;
+
+    // CIS: Remove Nameserver ID
+    server-id none;
+
+{% if dns_server_role|lower == 'master' and dns_server_slaves != None %}
+    // Slave notifications
+    notify yes;
+    also-notify {
+{% for dns_server_slave in dns_server_slaves.values()|unique %}
+        {{ dns_server_slave.address }};
+{% endfor %}
+    };
+{% endif %}
+
+    // Performance tunings
+    recursive-clients {{ dns_server_recursive_clients }};
+    clients-per-query {{ dns_server_clients_per_query }};
+    max-clients-per-query {{ dns_server_max_clients_per_query }};
+
+    // CIS: Response Rate Limiting and DDOS Mitigation
+    rate-limit {
+        // Limit Response to Rapid Identical Queries for DDOS mitigation
+        responses-per-second {{ dns_server_responses_per_second }};
+    };
+};

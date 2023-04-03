@@ -1,0 +1,32 @@
+# Copyright (c) 2023, Bennett Samowich <bennett@foolean.org>
+# All rights reserved
+# SPDX short identifier: BSD-3-Clause
+---
+
+# dns_server_packages
+#   List of server packages to be installed/removed
+dns_server_packages:
+  - 'bind'
+  - 'bind-chroot'
+  - 'bind-utils'
+
+# dns_server_user
+#   User as which the DNS server will run
+dns_server_user: 'named'
+
+# dns_server_user_shell
+#   Shell of the DNS server's user account
+dns_server_user_shell: '/bin/false'
+
+# dns_server_group
+#   Primary group of the DNS server user
+dns_server_group: 'named'
+
+# dns_server_etc_dir
+#   Directory under /etc in which the DNS files
+#   will be placed
+dns_server_etc_dir: '/etc/named'
+
+# dns_server_service
+#   Name of the DNS service
+dns_server_service: 'named-chroot'

@@ -1,0 +1,16 @@
+/*
+ * named.conf.forwarded_zones
+ *  Zones that are forwarded to specific remote resolvers
+ */
+
+{% if dns_server_forwarded_zones != None %}
+{%    for forwarded_zone, forwarded_zone_data in dns_server_forwarded_zones.items() %}
+zone "{{ forwarded_zone }}" IN {
+    type forward;
+    forwarders {
+{%         for forwarder in forwarded_zone_data.forwarders|unique|sort %}
+        {{ forwarder }};
+{%        endfor %}
+    };
+{%    endfor %}
+{% endif %}

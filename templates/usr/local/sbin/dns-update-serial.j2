@@ -1,0 +1,188 @@
+#!/bin/bash
+#
+# FILENAME: dns-update-serial
+# AUTHOR:   Bennett Samowich <bennett@foolean.org>
+# DATE:     2020-01-23
+#
+# DESCRIPTION:
+#   Update the serial number on DNS zone files.
+#
+#   This script assumes, by default, a zone file managed by CM that has a base
+#   serial number of "0000000000".  This allows CM to detect when changes are
+#   made to the zone that require the serial number to be updated.
+#
+###############################################################################
+
+set -o nounset
+set -o errexit
+
+# Set a sane path
+PATH="/bin:/usr/bin:/usr/sbin"
+
+# Define our defaults.
+# Some of these may be overridden by command-line arguments.
+BINDUSER="{{ dns_server_user }}";           # Username who will own non-root files
+ZONEDIR="{{ dns_server_etc_dir }}";       # Where the zone files are kept
+DEBUG=0;                    # Debugging flag
+VERBOSE=0;                  # Verbosity flag
+RELOAD=0;                   # Reload the DNS daemon
+CM_TAG="cm";                # Tag that identifies CM managed files
+
+# Simple usage function
+usage() {
+    echo "usage: $(basename $0) [OPTIONS] zone"
+    echo "Options:"
+    echo "  -D          - Print extra debugging information"
+    echo "  -d ZONEDIR  - Specify the directory containing the zone files"
+    echo "                (default: ${ZONEDIR})"
+    echo "  -h          - Print this message and exit"
+    echo "  -r          - Reload the DNS daemon after updating the zone file"
+    echo "  -t TAG      - Tag used for CM managed copies"
+    echo "                (default: ${CM_TAG})"
+    echo "  -u user     - User who owns the zone files"
+    echo "                (default: ${BINDUSER})"
+    echo "  -v          - Verbose output"
+
+    exit 1
+}
+
+debug() {
+    if [ ${DEBUG} -eq 1 ]
+    then
+        echo "debug: $*"
+    fi
+}
+
+fatal() {
+    echo "fatal: $*"
+    exit 1
+}
+
+verbose() {
+    if [ ${VERBOSE} -eq 1 ]
+    then
+        echo "$*"
+    fi
+}
+
+# Parse the command-line arguments
+while getopts ":Dd:hrt:uv" OPT
+do
+    case ${OPT} in
+        D)
+            DEBUG=1
+            ;;
+        d)
+            ZONEDIR="${OPTARG}"
+            ;;
+        h)
+            usage
+            exit 1
+            ;;
+        r)
+            RELOAD=1
+            ;;
+        t)
+            CM_TAG="${OPTARG}"
+            ;;
+        u)
+            UPDATE=1
+            ;;
+        v)
+            VERBOSE=1
+            ;;
+        \?)
+            echo "invalid option: -${OPTARG}"
+            exit 1
+            ;;
+        :)
+            echo "Option -${OPTARG} requires an argument"
+            exit 1
+            ;;
+    esac
+done
+shift $(( ${OPTIND} - 1 ))
+
+# Make sure we have something to work with.
+if [ $# != 1 ]
+then
+    usage
+    exit 1; # should never get here
+fi
+
+# Get the zone we're updating
+ZONE="$1"
+if [ "${ZONE}" == "" ]
+then
+    usage
+    exit 1; # should never get here
+fi
+
+# Assemble the full path to the zone file
+ZONE_FILE="${ZONEDIR}/${ZONE}"
+
+# Make sure the zone file or the CM copy exists
+if [ ! -f "${ZONE_FILE}" ] && [ ! -f "${ZONE_FILE}.${CM_TAG}" ]
+then
+    fatal "no zone file for '${ZONE}', skipping"
+fi
+
+debug "updating zone ${ZONE}"
+
+# Get the current serial number.
+if [ -f "${ZONE_FILE}" ]
+then
+    OLD_SERIAL=$(grep -i ";.*serial" "${ZONE_FILE}" | awk '{print $1}')
+else
+    OLD_SERIAL="0000000000"
+fi
+debug "old serial number: ${OLD_SERIAL}"
+
+# Extract the counter portion of the serial number
+# Note: we shouldn't reach 99 in one day but we'll fail out just in case we do
+OLD_SERIAL_NUM=$(echo "${OLD_SERIAL}" | cut -c9-10 | sed 's/^0*//')
+if [ "${OLD_SERIAL_NUM}" == "99" ]
+then
+    fatal "current counter is '99' and can not be incremented until tomorrow"
+fi
+
+# Increment the counter
+NEW_SERIAL_NUM=$(( ${OLD_SERIAL_NUM} + 1 ))
+
+# Assemble the new serial number
+NEW_SERIAL=$(printf "%s%02i" "$(date +%Y%m%d)" "${NEW_SERIAL_NUM}")
+debug "new serial number: ${NEW_SERIAL}"
+
+# Generate a new zone file from the CM managed one
+sed -e "s/0000000000/${NEW_SERIAL}/" "${ZONE_FILE}.${CM_TAG}" > "${ZONE_FILE}"
+
+# Ensure correct permissions of the CM managed file, if it exists
+if [ -f "${ZONE_FILE}.${CM_TAG}" ]
+then
+    chown ${BINDUSER}. "${ZONE_FILE}.${CM_TAG}"
+    chmod 0640         "${ZONE_FILE}.${CM_TAG}"
+fi
+
+# Ensure correct permissions on the zone file
+if [ -f "${ZONE_FILE}" ]
+then
+    chown ${BINDUSER}. "${ZONE_FILE}"
+    chmod 0640         "${ZONE_FILE}"
+else
+    fatal "zone file '${ZONE_FILE}' does not exist"
+fi
+verbose "${ZONE} updated to serial to ${NEW_SERIAL}"
+
+# Reload the zone
+if [ ${RELOAD} -eq 1 ]
+then
+    verbose "Reloading DNS service"
+    RELOAD=$(/usr/sbin/rndc reload 2>&1)
+    if [ $? -ne 0 ]
+    then
+        fatal "${RELOAD}"
+    fi
+    verbose "${RELOAD}"
+fi
+
+exit 0
